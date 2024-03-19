@@ -1,7 +1,7 @@
 # Recurrent Memory Transformer use separate module
 
 RMT-s is implemented as follows:
-![**RMT-S**](img/rmt-s.jpg?raw=True)
+![**RMT-S**](img/rmt-s.png?raw=True)
 
 
 ## Code
