@@ -5,7 +5,7 @@ RMT-s is implemented as follows:
 
 
 ## Code
-My code is based on [huggingface repository](https://github.com/huggingface/transformers)
+My code is based on [huggingface repository](https://github.com/huggingface/transformers) and [RMT](https://github.com/booydar/recurrent-memory-transformer)
 
 
 ## Tset_Result
