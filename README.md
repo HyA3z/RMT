@@ -1,6 +1,6 @@
 # Recurrent Memory Transformer with external update module
 
-RMT-s is implemented as follows:
+#### RMT-s is implemented as follows:
 ![**RMT-S**](img/RMT-S.png?raw=True)
 
 
