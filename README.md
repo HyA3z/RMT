@@ -3,6 +3,8 @@
 #### RMT-S is implemented as follows:
 ![**RMT-S**](img/RMT-S.png?raw=True)
 
+### RMT-M is same as RMT but use different input way as below
+![**RMT-M**](img/RMT-M.png?raw=True)
 
 ## Code
 My code is based on [huggingface repository](https://github.com/huggingface/transformers) and [RMT](https://github.com/booydar/recurrent-memory-transformer)
