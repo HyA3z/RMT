@@ -28,18 +28,32 @@ class MemoryCell(torch.nn.Module):
         input_length = input_ids.shape[1]
         memory_length = self.num_mem_tokens
 
-        #split input to memory_length pieces
-        input_idx = [i for i in range(0, input_length - (input_length // memory_length) + 1, input_length // memory_length)] \
-                    + [input_length] 
-
-        memory_idx = [i for i in range(memory_length + 1)]
+        if input_length < memory_length: # RMT
+            seg_kwargs, input_position = self.process_input(input_ids, memory_state, **kwargs)
+        else: # RMT-M
+            input_idx = self.split_indices(input_length, memory_length)
+            memory_idx = [i for i in range(memory_length + 1)]
         
-        seg_kwargs, input_position = self.process_input(input_ids, memory_state, input_idx, memory_idx, **kwargs)
+            seg_kwargs, input_position = self.process_input(input_ids, memory_state, input_idx, memory_idx, **kwargs)
+
         out = self.model(**seg_kwargs)
+
         out, new_memory_state = self.process_output(out, input_position, **kwargs)
 
         return out, new_memory_state
-    
+
+    def split_indices(self, total_length, num_segments):
+        base_length = total_length // num_segments
+        
+        remainder = total_length % num_segments
+        
+        indices = [0]
+        for i in range(num_segments):
+            add_length = base_length + (1 if i < remainder else 0)
+            indices.append(indices[-1] + add_length)
+            
+        return indices
+
     def generate(self, input_ids, memory_state, attention_mask, **generate_kwargs):
         if memory_state is None:
             memory_state = self.set_memory(input_ids.shape)
@@ -48,21 +62,26 @@ class MemoryCell(torch.nn.Module):
         out = self.model.generate(inputs_embeds=seg_kwargs['inputs_embeds'], attention_mask=seg_kwargs['attention_mask'], **generate_kwargs)
         return out
 
-    def process_input(self, input_ids, memory_state, input_idx, memory_idx, **kwargs):
+    def process_input(self, input_ids, memory_state, input_idx=None, memory_idx=None, **kwargs):
         seg_kwargs = dict(**kwargs)
+        input_position = None
 
         inputs_embeds = kwargs.get('inputs_embeds')
         if inputs_embeds is None:
             inputs_embeds = self.model.get_input_embeddings()(input_ids)
 
-        # handle the input
-        input_position = [x + y + self.num_mem_tokens for x, y in zip(input_idx, memory_idx)]
-        input = memory_state
-        for i in range(self.num_mem_tokens):
-            temp = torch.cat([inputs_embeds[:,input_idx[i]:input_idx[i+1],:], memory_state[:,i:i+1,:]], dim=1)
-            input = torch.cat([input, temp], dim=1)
+        if input_idx != None and memory_idx != None: # RMT-M
+            input_position = [x + y + self.num_mem_tokens for x, y in zip(input_idx, memory_idx)]
+            input = memory_state
 
-        inputs_embeds = input
+            for i in range(self.num_mem_tokens):
+                temp = torch.cat([inputs_embeds[:,input_idx[i]:input_idx[i+1],:], memory_state[:,i:i+1,:]], dim=1)
+                input = torch.cat([input, temp], dim=1)
+
+            inputs_embeds = input
+        else: # RMT
+            inputs_embeds = torch.cat([memory_state, inputs_embeds, memory_state], dim=1)
+
 
         seg_kwargs['input_ids'] = None
         seg_kwargs['inputs_embeds'] = inputs_embeds
@@ -71,39 +90,50 @@ class MemoryCell(torch.nn.Module):
         seg_kwargs['output_hidden_states'] = True
         return seg_kwargs, input_position
     
-    def pad_attention_mask(self, attention_mask, shape, input_position, input_idx):
+    def pad_attention_mask(self, attention_mask, shape, input_position=None, input_idx=None):
         if self.num_mem_tokens in {0, None}:
             return attention_mask
         else:
             mask = torch.ones(*shape[:2], dtype=torch.int64).to(attention_mask.device)
-            for i in range(self.num_mem_tokens):
-                mask[:, input_position[i]:input_position[i+1]-1] = attention_mask[:,input_idx[i]:input_idx[i+1]]
+            if input_position != None and input_idx != None: # RMT-M
+                for i in range(self.num_mem_tokens):
+                    mask[:, input_position[i]:input_position[i+1]-1] = attention_mask[:,input_idx[i]:input_idx[i+1]]
+            else: # RMT
+                mask[:, self.num_mem_tokens:-self.num_mem_tokens] = attention_mask
 
             return mask
     
-    def process_output(self, model_outputs, input_position, **kwargs):
+    def process_output(self, model_outputs, input_position=None, **kwargs):
         device = model_outputs.logits.device
         if self.num_mem_tokens not in {0, None}:
             out = CausalLMOutputWithCrossAttentions()
-            # get memory state
-            memory_state = torch.Tensor().to(device) # is []
-            for i in range(self.num_mem_tokens):
-                memory_state = torch.cat([memory_state, model_outputs.hidden_states[-1][:, input_position[i + 1] - 1:input_position[i + 1]]], dim=1)
-
-            # get logits
-            logits = torch.Tensor().to(device)
-            for i in range(self.num_mem_tokens):
-                logits = torch.cat([logits, model_outputs.logits[:,input_position[i]:input_position[i+1]-1]], dim=1)
-            out['logits'] = logits
             
-            # get hidden states
-            if kwargs.get('output_hidden_states'):
-                out['hidden_states'] = []
-                for lh in model_outputs.hidden_states:
-                    hidden_temp = torch.Tensor().to(device)
-                    for i in range(self.num_mem_tokens):
-                        hidden_temp = torch.cat([hidden_temp, lh[:,input_position[i]:input_position[i+1]-1]], dim=1)
-                out['hidden_states'].append(hidden_temp)
+            if input_position != None: # RMT-M
+                memory_state = torch.Tensor().to(device) # is []
+                for i in range(self.num_mem_tokens):
+                    memory_state = torch.cat([memory_state, model_outputs.hidden_states[-1][:, input_position[i + 1] - 1:input_position[i + 1]]], dim=1)
+
+                # get logits
+                logits = torch.Tensor().to(device)
+                for i in range(self.num_mem_tokens):
+                    logits = torch.cat([logits, model_outputs.logits[:,input_position[i]:input_position[i+1]-1]], dim=1)
+                out['logits'] = logits
+            
+                # get hidden states
+                if kwargs.get('output_hidden_states'):
+                    out['hidden_states'] = []
+                    for lh in model_outputs.hidden_states:
+                        hidden_temp = torch.Tensor().to(device)
+                        for i in range(self.num_mem_tokens):
+                            hidden_temp = torch.cat([hidden_temp, lh[:,input_position[i]:input_position[i+1]-1]], dim=1)
+                        out['hidden_states'].append(hidden_temp)
+            else: # RMT
+                memory_state = model_outputs.hidden_states[-1][:, -self.num_mem_tokens:]
+                out['logits'] = model_outputs.logits[:, self.num_mem_tokens:-self.num_mem_tokens]
+                
+                if kwargs.get('output_hidden_states'):
+                    out['hidden_states'] = [lh[:, self.num_mem_tokens:-self.num_mem_tokens] for lh in model_outputs.hidden_states]
+                
             if kwargs.get('output_attentions'):
                 out['attentions'] = model_outputs['attentions']
         else:
@@ -129,6 +159,7 @@ class RecurrentWrapper(torch.nn.Module):
             cell_out, memory_state = self.memory_cell(**segment, memory_state=memory_state, output_hidden_states=True)
             cell_outputs.append(cell_out)
             self.manage_gradients(memory_state, seg_num)
+
 
         out = self.process_outputs(cell_outputs, labels=labels, 
                                    labels_mask=labels_mask,
