@@ -1,6 +1,6 @@
 # Recurrent Memory Transformer with external update module
 
-#### RMT-S is implemented as follows:
+#### RMT-U is implemented as follows:
 ![**RMT-U**](img/RMT-U.png?raw=True)
 
 #### RMT-M is same as RMT but use different input way as follows:
