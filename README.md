@@ -1,7 +1,7 @@
-# Recurrent Memory Transformer with external update module
+# Recurrent Memory Transformer with external express module
 
-#### RMT-U is implemented as follows:
-![**RMT-U**](img/RMT-U.png?raw=True)
+#### The RMT-U architecture as follows:
+![**RMT-U**](img/compress_module.jpg?raw=True)
 
 #### RMT-M is same as RMT but use different input way as follows:
 ![**RMT-M**](img/RMT-M.png?raw=True)
